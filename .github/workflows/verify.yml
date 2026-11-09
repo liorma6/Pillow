@@ -73,7 +73,7 @@ jobs:
       - name: Build documentation with warnings as errors
         if: ${{ !cancelled() }}
         working-directory: docs
-        run: python3 -m sphinx.cmd.build --builder html --fail-on-warning --jobs 2 . _build/html
+        run: python3 -m sphinx.cmd.build --builder html --fail-on-warning --jobs 2 . "$RUNNER_TEMP/pillow-docs"
       - name: Repository lint checks
         if: ${{ !cancelled() }}
         run: python3 -m tox -e lint
