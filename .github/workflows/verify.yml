@@ -1,0 +1,75 @@
+name: Verify ImageSequence documentation
+on:
+  push:
+    branches: [verify/imagesequence-docs]
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: baseline
+            ref: 4d01b943b9550450757968168a32ea03448b5464
+          - name: documentation-change
+            ref: 18456665329a1057a18ef99167e58e4318820802
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.14'
+      - name: Install image libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libjpeg-dev zlib1g-dev libtiff-dev libfreetype6-dev liblcms2-dev libwebp-dev libopenjp2-7-dev libraqm-dev libimagequant-dev libavif-dev ghostscript imagemagick
+      - name: Build Pillow and install checks
+        run: python3 -m pip install -e '.[tests,docs]' numpy tox
+      - name: Self test
+        run: python3 selftest.py
+      - name: Verify documented frame behavior
+        run: |
+          python3 - <<'PY'
+          from PIL import Image, ImageSequence
+
+          path = 'Tests/images/iss634.gif'
+          with Image.open(path) as im:
+              frames = list(ImageSequence.Iterator(im))
+              assert len(frames) == 42
+              assert all(frame is im for frame in frames)
+              assert im.tell() == 41
+
+          with Image.open(path) as im:
+              frames = ImageSequence.all_frames(im)
+              copies = [frame.copy() for frame in ImageSequence.Iterator(im)]
+              assert len(frames) == len(copies) == 42
+              assert len({id(frame) for frame in frames}) == 42
+              for index, (frame, copied) in enumerate(zip(frames, copies)):
+                  im.seek(index)
+                  expected = im.convert('RGBA').tobytes()
+                  assert frame.convert('RGBA').tobytes() == expected
+                  assert copied.convert('RGBA').tobytes() == expected
+
+          # The documented FLI example uses this existing FLI fixture.
+          with Image.open('Tests/images/a.fli') as im:
+              frames = ImageSequence.all_frames(im)
+              assert len(frames) > 1
+              assert len({id(frame) for frame in frames}) == len(frames)
+          for frame in frames:
+              frame.load()
+          print('Iterator references, copied GIF frames, and FLI example verified')
+          PY
+      - name: Test suite
+        run: python3 -m pytest Tests/ -q -n 2
+      - name: Build documentation with warnings as errors
+        if: ${{ !cancelled() }}
+        run: python3 -m sphinx.cmd.build --builder html --fail-on-warning --jobs 2 docs docs/_build/html
+      - name: Repository lint checks
+        if: ${{ !cancelled() }}
+        run: python3 -m tox -e lint
